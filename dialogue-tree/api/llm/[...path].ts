@@ -1,17 +1,13 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+export const config = { runtime: 'edge' };
 
-export const config = {
-  api: { bodyParser: false },
-};
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: Request) {
   const provider = process.env.LLM_PROVIDER || 'anthropic';
   const apiKey = process.env.LLM_API_KEY || '';
-  const baseUrl = process.env.LLM_BASE_URL || 'https://api.anthropic.com';
+  const baseUrl = (process.env.LLM_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '');
 
-  const pathParam = (req.query['path'] as string[]) ?? [];
-  const targetPath = '/' + pathParam.join('/');
-  const targetUrl = baseUrl.replace(/\/$/, '') + targetPath;
+  const url = new URL(req.url);
+  const subpath = url.pathname.replace(/^\/api\/llm/, '');
+  const targetUrl = baseUrl + subpath;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -24,36 +20,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  const chunks: Buffer[] = [];
-  await new Promise<void>((resolve) => {
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', resolve);
-  });
-  const body = Buffer.concat(chunks);
-
   const upstream = await fetch(targetUrl, {
-    method: req.method ?? 'POST',
+    method: req.method,
     headers,
-    body: body.length > 0 ? body : undefined,
+    body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
+    // @ts-ignore
+    duplex: 'half',
   });
 
-  res.status(upstream.status);
-  upstream.headers.forEach((value, key) => {
-    if (!['transfer-encoding', 'connection'].includes(key.toLowerCase())) {
-      res.setHeader(key, value);
-    }
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      'Content-Type': upstream.headers.get('Content-Type') || 'application/json',
+      'Cache-Control': 'no-cache',
+    },
   });
-
-  if (!upstream.body) {
-    res.end();
-    return;
-  }
-
-  const reader = upstream.body.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    res.write(value);
-  }
-  res.end();
 }
