@@ -1,5 +1,6 @@
 {
-  "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  "routes": [
+    { "src": "/api/llm/(.*)", "dest": "/api/proxy" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
